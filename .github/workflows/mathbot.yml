@@ -1,0 +1,103 @@
+# Крутая Тема — расписание бота
+# ================================
+# Задание 1 в 08:00 UTC (= 11:00 по Хельсинки летом):
+#   генерирует пост и присылает тебе в Telegram
+#
+# Задание 2 в 10:30 UTC (= 13:30 по Хельсинки летом):
+#   проверяет твой ответ и публикует в канал
+#
+# ЗИМА: UTC+2, значит:
+#   08:00 UTC = 10:00 по Хельсинки
+#   10:30 UTC = 12:30 по Хельсинки
+# Скорректируй время в cron строках при необходимости.
+# Используй crontab.guru для перевода времени.
+
+name: Крутая Тема Bot
+
+on:
+  schedule:
+    - cron: "0 8 * * *"    # Задание 1: генерация + сообщение тебе
+    - cron: "30 10 * * *"  # Задание 2: проверка ответа + публикация
+  # Эта кнопка позволяет запускать вручную (для теста)
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Какую фазу запустить?"
+        required: true
+        default: "generate"
+        type: choice
+        options:
+          - generate
+          - post
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────
+  # ЗАДАНИЕ 1: Генерация поста и отправка тебе в Telegram
+  # ─────────────────────────────────────────────────────────
+  generate-and-send:
+    name: "Генерация поста и отправка в Telegram"
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '0 8 * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.phase == 'generate')
+
+    steps:
+      - name: Скачать код репозитория
+        uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Установить зависимости
+        run: pip install -r requirements.txt
+
+      - name: Запустить генерацию поста
+        env:
+          GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          MY_TELEGRAM_USER_ID: ${{ secrets.MY_TELEGRAM_USER_ID }}
+        run: python bot.py generate
+
+      - name: Сохранить черновик в репозиторий
+        run: |
+          git config --global user.name "KrutayaTema Bot"
+          git config --global user.email "bot@krutayatema.local"
+          git add today_draft.json
+          git diff --staged --quiet || git commit -m "chore: сохранение черновика [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────
+  # ЗАДАНИЕ 2: Проверка твоего ответа и публикация в канал
+  # ─────────────────────────────────────────────────────────
+  check-and-post:
+    name: "Проверка ответа и публикация"
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '30 10 * * *') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.phase == 'post')
+
+    steps:
+      - name: Скачать код репозитория
+        uses: actions/checkout@v4
+
+      - name: Установить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Установить зависимости
+        run: pip install -r requirements.txt
+
+      - name: Проверить ответ и опубликовать
+        env:
+          GEMINI_API_KEY:      ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          MY_TELEGRAM_USER_ID: ${{ secrets.MY_TELEGRAM_USER_ID }}
+        run: python bot.py post
