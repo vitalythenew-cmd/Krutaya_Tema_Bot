@@ -16,6 +16,7 @@ import os
 import sys
 import json
 import requests
+import time
 from datetime import datetime, timezone
 
 # ── Настройки (берутся из GitHub Secrets) ───────────────────
@@ -89,17 +90,27 @@ def generate_post():
         }
     }
 
-    r = requests.post(GEMINI_URL, json=payload, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except (KeyError, IndexError) as e:
-        raise RuntimeError(f"Неожиданный ответ от Gemini: {data}") from e
-
-    return text, topic
-
+    # Три попытки с увеличивающимся таймаутом
+    for attempt in range(3):
+        try:
+            timeout = 60 + attempt * 30  # 60, 90, 120 секунд
+            print(f"🌐 Попытка {attempt + 1}/3 (таймаут {timeout}с)...")
+            r = requests.post(GEMINI_URL, json=payload, timeout=timeout)
+            r.raise_for_status()
+            data = r.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            print("✅ Gemini ответил успешно.")
+            return text, topic
+        except requests.exceptions.Timeout:
+            print(f"⏱️  Таймаут на попытке {attempt + 1}.")
+            if attempt < 2:
+                wait = 10 + attempt * 10
+                print(f"⏳ Жду {wait} секунд перед следующей попыткой...")
+                time.sleep(wait)
+            else:
+                raise RuntimeError("Gemini не отвечает после 3 попыток. Попробуй позже.")
+        except Exception as e:
+            raise RuntimeError(f"Ошибка Gemini: {e}")
 
 # ── ФАЗА 1Б: Отправить черновик тебе в Telegram ─────────────
 
