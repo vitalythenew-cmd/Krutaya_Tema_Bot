@@ -1,15 +1,7 @@
 """
-Крутая Тема — Telegram Bot
-===========================
-Каждый день:
-  1. Генерирует пост о математике на русском (Gemini AI, бесплатно)
-  2. Присылает черновик тебе в Telegram на проверку
-  3. Если ты ответил YES — публикует в канал
-  4. Если ты написал правки — публикует твою версию
-  5. Если SKIP — пропускает день
-
-Запуск: python bot.py generate  (фаза 1)
-        python bot.py post      (фаза 2)
+Крутая Тема — Telegram Bot (исправленная версия, сентябрь 2026)
+================================================================
+Использует новый Google GenAI SDK который работает с AQ. ключами.
 """
 
 import os
@@ -18,24 +10,18 @@ import json
 import time
 import requests
 from datetime import datetime, timezone
+from google import genai
 
-# ── Настройки (берутся из GitHub Secrets) ───────────────────
+# ── Настройки ────────────────────────────────────────────────
 GEMINI_API_KEY       = os.environ["GEMINI_API_KEY"]
 TELEGRAM_BOT_TOKEN   = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHANNEL_ID  = os.environ["TELEGRAM_CHANNEL_ID"]
 MY_TELEGRAM_USER_ID  = int(os.environ["MY_TELEGRAM_USER_ID"])
 
 TG = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-
-# Актуальная бесплатная модель Gemini (август 2026)
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-3.7-flash:generateContent?key={GEMINI_API_KEY}"
-)
-
 STATE_FILE = "today_draft.json"
 
-# ── Темы постов (меняются каждый день автоматически) ────────
+# ── Темы постов ──────────────────────────────────────────────
 TOPICS = [
     "удивительный факт о простых числах",
     "парадокс или загадка, которая взрывает мозг",
@@ -55,12 +41,11 @@ TOPICS = [
 ]
 
 def pick_topic():
-    """Выбирает тему по дню года — каждый день новая."""
     day = datetime.now(timezone.utc).timetuple().tm_yday
     return TOPICS[day % len(TOPICS)]
 
 
-# ── ФАЗА 1А: Генерация поста через Gemini ───────────────────
+# ── ФАЗА 1А: Генерация поста через новый Gemini SDK ─────────
 
 def generate_post():
     topic = pick_topic()
@@ -78,43 +63,37 @@ def generate_post():
 - Заверши вопросом или вызовом для читателя
 - Без заголовков, без списков с точками — чистые абзацы
 - Последняя строка: 3–5 хэштегов (например: #математика #крутаятема #учисьинтересно)
-- Пиши на живом, современном русском языке. Не канцелярщина, не учебник.
+- Пиши на живом, современном русском языке.
 
-Выведи только текст поста. Никаких предисловий типа "вот пост:"."""
+Выведи только текст поста. Никаких предисловий."""
 
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.88,
-            "maxOutputTokens": 600,
-        }
-    }
+    # Новый способ вызова — через официальный SDK (работает с AQ. ключами)
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
-    # Три попытки с увеличивающимся таймаутом
     for attempt in range(3):
         try:
-            timeout = 60 + attempt * 30  # 60, 90, 120 секунд
-            print(f"🌐 Попытка {attempt + 1}/3 (таймаут {timeout}с)...")
-            r = requests.post(GEMINI_URL, json=payload, timeout=timeout)
-            r.raise_for_status()
-            data = r.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            print(f"🌐 Попытка {attempt + 1}/3...")
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            text = response.text.strip()
             print("✅ Gemini ответил успешно.")
             return text, topic
-        except (requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+        except Exception as e:
             print(f"⚠️  Ошибка на попытке {attempt + 1}: {e}")
             if attempt < 2:
                 wait = 15 + attempt * 15
-                print(f"⏳ Жду {wait} секунд перед следующей попыткой...")
+                print(f"⏳ Жду {wait} секунд...")
                 time.sleep(wait)
             else:
                 raise RuntimeError(f"Gemini недоступен после 3 попыток: {e}")
+
 
 # ── ФАЗА 1Б: Отправить черновик тебе в Telegram ─────────────
 
 def send_draft_to_me(post_text, topic):
     today = datetime.now(timezone.utc).strftime("%d.%m.%Y")
-
     message = (
         f"📋 <b>Крутая Тема — черновик {today}</b>\n"
         f"Тема: <i>{topic}</i>\n\n"
@@ -126,21 +105,16 @@ def send_draft_to_me(post_text, topic):
         f"• <b>SKIP</b> → пропустить сегодня\n"
         f"• <i>Любой другой текст</i> → опубликую твою версию"
     )
-
     r = requests.post(
         f"{TG}/sendMessage",
-        json={
-            "chat_id": MY_TELEGRAM_USER_ID,
-            "text": message,
-            "parse_mode": "HTML"
-        },
+        json={"chat_id": MY_TELEGRAM_USER_ID, "text": message, "parse_mode": "HTML"},
         timeout=20
     )
     r.raise_for_status()
-    print(f"✅ Черновик отправлен тебе в Telegram (ID: {MY_TELEGRAM_USER_ID})")
+    print(f"✅ Черновик отправлен тебе в Telegram.")
 
 
-# ── ФАЗА 1В: Сохранить черновик в файл ──────────────────────
+# ── ФАЗА 1В: Сохранить черновик ─────────────────────────────
 
 def save_draft(post_text, topic):
     state = {
@@ -159,7 +133,7 @@ def load_draft():
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if state.get("date") == today:
             return state["post"], state["topic"]
-        print("⚠️  Черновик устарел (другой день).")
+        print("⚠️  Черновик устарел.")
         return None, None
     except FileNotFoundError:
         print("⚠️  Файл черновика не найден.")
@@ -169,49 +143,37 @@ def load_draft():
 # ── ФАЗА 2А: Проверить твой ответ в Telegram ────────────────
 
 def check_my_reply():
-    """
-    Получает последние сообщения боту и ищет ответ от тебя
-    за последние 3.5 часа.
-    Возвращает: "YES", "SKIP", текст правок или None.
-    """
     r = requests.get(f"{TG}/getUpdates", params={"limit": 100}, timeout=20)
     r.raise_for_status()
     updates = r.json().get("result", [])
 
     now_ts = datetime.now(timezone.utc).timestamp()
-    WINDOW = 3.5 * 60 * 60  # 3.5 часа в секундах
+    WINDOW = 3.5 * 60 * 60
 
     for update in reversed(updates):
         msg = update.get("message")
         if not msg:
             continue
-
         sender_id = msg.get("from", {}).get("id")
         if sender_id != MY_TELEGRAM_USER_ID:
             continue
-
         msg_ts = msg.get("date", 0)
         if now_ts - msg_ts > WINDOW:
             continue
-
         text = msg.get("text", "").strip()
         if not text:
             continue
-
         first_word = text.split()[0].upper()
-
         if first_word == "YES":
-            print("✅ Получено одобрение: YES")
+            print("✅ Одобрено: YES")
             return "YES"
         if first_word == "SKIP":
-            print("⏭️  Получена команда: SKIP")
+            print("⏭️  Команда: SKIP")
             return "SKIP"
-
-        # Любой другой текст = правки от тебя
         print(f"✏️  Получены правки ({len(text)} символов)")
         return text
 
-    print("❌ Ответ от тебя не найден за последние 3.5 часа.")
+    print("❌ Ответ не найден за последние 3.5 часа.")
     return None
 
 
@@ -220,21 +182,16 @@ def check_my_reply():
 def post_to_channel(text):
     r = requests.post(
         f"{TG}/sendMessage",
-        json={
-            "chat_id": TELEGRAM_CHANNEL_ID,
-            "text": text,
-            "parse_mode": "HTML",
-        },
+        json={"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"},
         timeout=20
     )
     r.raise_for_status()
-    print(f"🚀 Опубликовано в канал {TELEGRAM_CHANNEL_ID}!")
+    print(f"🚀 Опубликовано в канал!")
 
 
 # ── ЗАПУСК ───────────────────────────────────────────────────
 
 def run_generate():
-    """Фаза 1: генерирует пост и присылает тебе на проверку."""
     print("🔮 Генерирую пост через Gemini...")
     post_text, topic = generate_post()
     print(f"\n--- ЧЕРНОВИК ---\n{post_text}\n---\n")
@@ -244,24 +201,19 @@ def run_generate():
     print("✅ Фаза 1 завершена. Жду твоего ответа в Telegram.")
 
 def run_post():
-    """Фаза 2: проверяет ответ и публикует пост."""
     print("🔍 Проверяю твой ответ в Telegram...")
     reply = check_my_reply()
-
     if reply is None:
-        print("Ответа нет. Пост сегодня пропущен.")
+        print("Ответа нет. Пост пропущен.")
         return
     if reply == "SKIP":
-        print("Пропускаю по твоей команде.")
+        print("Пропускаю.")
         return
-
     post_text, topic = load_draft()
     if post_text is None:
         print("❌ Не могу загрузить черновик. Отмена.")
         return
-
     final_text = post_text if reply == "YES" else reply
-
     print("🚀 Публикую в канал...")
     post_to_channel(final_text)
     print("✅ Пост опубликован!")
