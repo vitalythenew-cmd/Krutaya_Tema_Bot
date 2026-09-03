@@ -29,7 +29,7 @@ TG = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 # Актуальная бесплатная модель Gemini (август 2026)
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
+        f"gemini-3.7-flash:generateContent?key={GEMINI_API_KEY}"
 )
 
 STATE_FILE = "today_draft.json"
@@ -100,16 +100,14 @@ def generate_post():
             text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
             print("✅ Gemini ответил успешно.")
             return text, topic
-        except requests.exceptions.Timeout:
-            print(f"⏱️  Таймаут на попытке {attempt + 1}.")
+        except (requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+            print(f"⚠️  Ошибка на попытке {attempt + 1}: {e}")
             if attempt < 2:
-                wait = 10 + attempt * 10
+                wait = 15 + attempt * 15
                 print(f"⏳ Жду {wait} секунд перед следующей попыткой...")
                 time.sleep(wait)
             else:
-                raise RuntimeError("Gemini не отвечает после 3 попыток. Попробуй позже.")
-        except Exception as e:
-            raise RuntimeError(f"Ошибка Gemini: {e}")
+                raise RuntimeError(f"Gemini недоступен после 3 попыток: {e}")
 
 # ── ФАЗА 1Б: Отправить черновик тебе в Telegram ─────────────
 
