@@ -60,6 +60,7 @@ jobs:
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           MY_TELEGRAM_USER_ID: ${{ secrets.MY_TELEGRAM_USER_ID }}
+          PIXABAY_API_KEY:     ${{ secrets.PIXABAY_API_KEY }}
         run: python bot.py generate
 
       - name: Сохранить черновик в репозиторий
@@ -100,4 +101,5 @@ jobs:
           TELEGRAM_BOT_TOKEN:  ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           MY_TELEGRAM_USER_ID: ${{ secrets.MY_TELEGRAM_USER_ID }}
+          PIXABAY_API_KEY:     ${{ secrets.PIXABAY_API_KEY }}
         run: python bot.py post
