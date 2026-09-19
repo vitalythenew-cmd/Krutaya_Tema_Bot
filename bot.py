@@ -97,47 +97,34 @@ def find_image(search_query_en):
     """Ищет подходящую картинку на Pixabay по английскому запросу."""
     print(f"🖼️  Ищу картинку: '{search_query_en}'...")
     try:
-        r = requests.get(
-            "https://pixabay.com/api/",
-            params={
-                "key":        PIXABAY_API_KEY,
-                "q":          search_query_en,
-                "image_type": "photo",
-                "category":   "science",
-                "safesearch": "true",
-                "per_page":   10,
-                "order":      "popular",
-            },
-            timeout=15
-        )
-        r.raise_for_status()
-        hits = r.json().get("hits", [])
-
-        if not hits:
-            # Попробуем без категории если ничего не нашли
-            r2 = requests.get(
+        for attempt_query in [search_query_en, "mathematics abstract"]:
+            r = requests.get(
                 "https://pixabay.com/api/",
                 params={
                     "key":        PIXABAY_API_KEY,
-                    "q":          search_query_en,
+                    "q":          attempt_query,
                     "image_type": "photo",
                     "safesearch": "true",
-                    "per_page":   10,
+                    "per_page":   20,
+                    "order":      "popular",
+                    "min_width":  800,
                 },
                 timeout=15
             )
-            hits = r2.json().get("hits", [])
+            r.raise_for_status()
+            hits = r.json().get("hits", [])
 
-        if hits:
-            image_url = hits[0]["webformatURL"]
-            print(f"✅ Картинка найдена!")
-            return image_url
-        else:
-            print("⚠️  Картинка не найдена, пост будет без картинки.")
-            return None
+            if hits:
+                # Берём largeImageURL — он лучше принимается Telegram
+                image_url = hits[0].get("largeImageURL") or hits[0].get("webformatURL")
+                print(f"✅ Картинка найдена: {image_url[:60]}...")
+                return image_url
+
+        print("⚠️  Картинка не найдена.")
+        return None
 
     except Exception as e:
-        print(f"⚠️  Ошибка поиска картинки: {e}. Пост будет без картинки.")
+        print(f"⚠️  Ошибка поиска картинки: {e}.")
         return None
 
 
