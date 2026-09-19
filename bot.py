@@ -158,31 +158,33 @@ def send_draft_to_me(post_text, topic_ru, image_url):
     )
 
     if image_url:
-        # Отправляем картинку + текст
-        r = requests.post(
-            f"{TG}/sendPhoto",
-            data={
-                "chat_id":    MY_TELEGRAM_USER_ID,
-                "photo":      image_url,
-                "caption":    caption,
-                "parse_mode": "HTML",
-            },
-            timeout=20
-        )
+        try:
+            # Скачиваем картинку и отправляем как файл
+            img_data = requests.get(image_url, timeout=15).content
+            r = requests.post(
+                f"{TG}/sendPhoto",
+                data={"chat_id": MY_TELEGRAM_USER_ID, "caption": caption, "parse_mode": "HTML"},
+                files={"photo": ("image.jpg", img_data, "image/jpeg")},
+                timeout=30
+            )
+            r.raise_for_status()
+        except Exception as e:
+            print(f"⚠️  Не удалось отправить фото: {e}. Отправляю без картинки.")
+            r = requests.post(
+                f"{TG}/sendMessage",
+                json={"chat_id": MY_TELEGRAM_USER_ID, "text": caption, "parse_mode": "HTML"},
+                timeout=20
+            )
+            r.raise_for_status()
     else:
-        # Только текст если картинки нет
         r = requests.post(
             f"{TG}/sendMessage",
-            json={
-                "chat_id":    MY_TELEGRAM_USER_ID,
-                "text":       caption,
-                "parse_mode": "HTML",
-            },
+            json={"chat_id": MY_TELEGRAM_USER_ID, "text": caption, "parse_mode": "HTML"},
             timeout=20
         )
+        r.raise_for_status()
 
-    r.raise_for_status()
-    print(f"✅ Черновик с картинкой отправлен тебе в Telegram.")
+    print(f"✅ Черновик отправлен тебе в Telegram.")
 
 
 # ── ФАЗА 1Г: Сохранить черновик ─────────────────────────────
@@ -254,27 +256,30 @@ def check_my_reply():
 
 def post_to_channel(text, image_url):
     if image_url:
-        r = requests.post(
-            f"{TG}/sendPhoto",
-            data={
-                "chat_id":    TELEGRAM_CHANNEL_ID,
-                "photo":      image_url,
-                "caption":    text,
-                "parse_mode": "HTML",
-            },
-            timeout=20
-        )
+        try:
+            img_data = requests.get(image_url, timeout=15).content
+            r = requests.post(
+                f"{TG}/sendPhoto",
+                data={"chat_id": TELEGRAM_CHANNEL_ID, "caption": text, "parse_mode": "HTML"},
+                files={"photo": ("image.jpg", img_data, "image/jpeg")},
+                timeout=30
+            )
+            r.raise_for_status()
+        except Exception as e:
+            print(f"⚠️  Не удалось отправить фото: {e}. Публикую без картинки.")
+            r = requests.post(
+                f"{TG}/sendMessage",
+                json={"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"},
+                timeout=20
+            )
+            r.raise_for_status()
     else:
         r = requests.post(
             f"{TG}/sendMessage",
-            json={
-                "chat_id":    TELEGRAM_CHANNEL_ID,
-                "text":       text,
-                "parse_mode": "HTML",
-            },
+            json={"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"},
             timeout=20
         )
-    r.raise_for_status()
+        r.raise_for_status()
     print(f"🚀 Опубликовано в канал!")
 
 
