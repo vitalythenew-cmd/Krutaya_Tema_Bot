@@ -22,6 +22,7 @@ PIXABAY_API_KEY      = os.environ["PIXABAY_API_KEY"]
 
 TG = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 STATE_FILE = "today_draft.json"
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; KrutayaTemaBot/1.0)"}
 
 # ── Темы постов ──────────────────────────────────────────────
 TOPICS = [
@@ -84,7 +85,7 @@ def generate_post():
         except Exception as e:
             print(f"⚠️  Ошибка на попытке {attempt + 1}: {e}")
             if attempt < 2:
-                wait = 15 + attempt * 15
+                wait = 30 + attempt * 30
                 print(f"⏳ Жду {wait} секунд...")
                 time.sleep(wait)
             else:
@@ -94,7 +95,6 @@ def generate_post():
 # ── ФАЗА 1Б: Найти картинку на Pixabay ──────────────────────
 
 def find_image(search_query_en):
-    """Ищет подходящую картинку на Pixabay по английскому запросу."""
     print(f"🖼️  Ищу картинку: '{search_query_en}'...")
     try:
         for attempt_query in [search_query_en, "mathematics abstract"]:
@@ -109,15 +109,15 @@ def find_image(search_query_en):
                     "order":      "popular",
                     "min_width":  800,
                 },
-                timeout=15
+                timeout=15,
+                headers=HEADERS,
             )
             r.raise_for_status()
             hits = r.json().get("hits", [])
-
             if hits:
-                # Берём largeImageURL — он лучше принимается Telegram
-                image_url = hits[0].get("largeImageURL") or hits[0].get("webformatURL")
-                print(f"✅ Картинка найдена: {image_url[:60]}...")
+                # webformatURL — публичный, всегда доступен для скачивания
+                image_url = hits[0].get("webformatURL")
+                print(f"✅ Картинка найдена.")
                 return image_url
 
         print("⚠️  Картинка не найдена.")
@@ -128,13 +128,30 @@ def find_image(search_query_en):
         return None
 
 
+# ── Скачать картинку ─────────────────────────────────────────
+
+def download_image(image_url):
+    try:
+        img_response = requests.get(image_url, timeout=20, headers=HEADERS)
+        img_response.raise_for_status()
+        img_data = img_response.content
+        print(f"📦 Картинка скачана: {len(img_data)} байт")
+        return img_data
+    except Exception as e:
+        print(f"⚠️  Не удалось скачать картинку: {e}")
+        return None
+
+
 # ── ФАЗА 1В: Отправить черновик тебе в Telegram ─────────────
 
 def send_draft_to_me(post_text, topic_ru, image_url):
     today = datetime.now(timezone.utc).strftime("%d.%m.%Y")
-    caption = (
-        f"📋 <b>Крутая Тема — черновик {today}</b>\n"
-        f"Тема: <i>{topic_ru}</i>\n\n"
+
+    # Короткий caption только для фото (лимит Telegram — 1024 символа)
+    short_caption = f"📋 <b>Крутая Тема — черновик {today}</b>\nТема: <i>{topic_ru}</i>"
+
+    # Полный текст с инструкциями — отдельным сообщением
+    full_message = (
         f"{'─' * 30}\n"
         f"{post_text}\n"
         f"{'─' * 30}\n\n"
@@ -145,33 +162,37 @@ def send_draft_to_me(post_text, topic_ru, image_url):
     )
 
     if image_url:
-        try:
-            # Скачиваем картинку и отправляем как файл
-            img_data = requests.get(image_url, timeout=15).content
-            r = requests.post(
-                f"{TG}/sendPhoto",
-                data={"chat_id": MY_TELEGRAM_USER_ID, "caption": caption, "parse_mode": "HTML"},
-                files={"photo": ("image.jpg", img_data, "image/jpeg")},
-                timeout=30
-            )
-            r.raise_for_status()
-        except Exception as e:
-            print(f"⚠️  Не удалось отправить фото: {e}. Отправляю без картинки.")
-            r = requests.post(
-                f"{TG}/sendMessage",
-                json={"chat_id": MY_TELEGRAM_USER_ID, "text": caption, "parse_mode": "HTML"},
-                timeout=20
-            )
-            r.raise_for_status()
-    else:
-        r = requests.post(
-            f"{TG}/sendMessage",
-            json={"chat_id": MY_TELEGRAM_USER_ID, "text": caption, "parse_mode": "HTML"},
-            timeout=20
-        )
-        r.raise_for_status()
+        img_data = download_image(image_url)
+        if img_data:
+            try:
+                # Отправляем фото с коротким caption
+                r = requests.post(
+                    f"{TG}/sendPhoto",
+                    data={
+                        "chat_id":    str(MY_TELEGRAM_USER_ID),
+                        "caption":    short_caption,
+                        "parse_mode": "HTML",
+                    },
+                    files={"photo": ("image.jpg", img_data, "image/jpeg")},
+                    timeout=30
+                )
+                r.raise_for_status()
+                print("✅ Фото отправлено.")
+            except Exception as e:
+                print(f"⚠️  Ошибка отправки фото: {e}.")
 
-    print(f"✅ Черновик отправлен тебе в Telegram.")
+    # Отправляем текст поста отдельным сообщением
+    r = requests.post(
+        f"{TG}/sendMessage",
+        json={
+            "chat_id":    MY_TELEGRAM_USER_ID,
+            "text":       full_message,
+            "parse_mode": "HTML",
+        },
+        timeout=20
+    )
+    r.raise_for_status()
+    print("✅ Черновик отправлен тебе в Telegram.")
 
 
 # ── ФАЗА 1Г: Сохранить черновик ─────────────────────────────
@@ -242,32 +263,39 @@ def check_my_reply():
 # ── ФАЗА 2Б: Опубликовать в канал ───────────────────────────
 
 def post_to_channel(text, image_url):
+    """
+    Публикует в канал: сначала фото, потом текст поста отдельным сообщением.
+    Так обходим лимит caption в 1024 символа.
+    """
     if image_url:
-        try:
-            img_data = requests.get(image_url, timeout=15).content
-            r = requests.post(
-                f"{TG}/sendPhoto",
-                data={"chat_id": TELEGRAM_CHANNEL_ID, "caption": text, "parse_mode": "HTML"},
-                files={"photo": ("image.jpg", img_data, "image/jpeg")},
-                timeout=30
-            )
-            r.raise_for_status()
-        except Exception as e:
-            print(f"⚠️  Не удалось отправить фото: {e}. Публикую без картинки.")
-            r = requests.post(
-                f"{TG}/sendMessage",
-                json={"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"},
-                timeout=20
-            )
-            r.raise_for_status()
-    else:
-        r = requests.post(
-            f"{TG}/sendMessage",
-            json={"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"},
-            timeout=20
-        )
-        r.raise_for_status()
-    print(f"🚀 Опубликовано в канал!")
+        img_data = download_image(image_url)
+        if img_data:
+            try:
+                r = requests.post(
+                    f"{TG}/sendPhoto",
+                    data={
+                        "chat_id": str(TELEGRAM_CHANNEL_ID),
+                    },
+                    files={"photo": ("image.jpg", img_data, "image/jpeg")},
+                    timeout=30
+                )
+                r.raise_for_status()
+                print("🖼️  Фото опубликовано в канал.")
+            except Exception as e:
+                print(f"⚠️  Не удалось опубликовать фото: {e}.")
+
+    # Текст поста — всегда отдельным сообщением
+    r = requests.post(
+        f"{TG}/sendMessage",
+        json={
+            "chat_id":    TELEGRAM_CHANNEL_ID,
+            "text":       text,
+            "parse_mode": "HTML",
+        },
+        timeout=20
+    )
+    r.raise_for_status()
+    print("🚀 Текст опубликован в канал!")
 
 
 # ── ЗАПУСК ───────────────────────────────────────────────────
@@ -276,10 +304,8 @@ def run_generate():
     print("🔮 Генерирую пост через Gemini...")
     post_text, topic_ru, topic_en = generate_post()
     print(f"\n--- ЧЕРНОВИК ---\n{post_text}\n---\n")
-
     image_url = find_image(topic_en)
     save_draft(post_text, topic_ru, topic_en, image_url)
-
     print("📲 Отправляю черновик тебе в Telegram...")
     send_draft_to_me(post_text, topic_ru, image_url)
     print("✅ Фаза 1 завершена. Жди сообщения в Telegram!")
@@ -287,19 +313,16 @@ def run_generate():
 def run_post():
     print("🔍 Проверяю твой ответ в Telegram...")
     reply = check_my_reply()
-
     if reply is None:
         print("Ответа нет. Пост пропущен.")
         return
     if reply == "SKIP":
         print("Пропускаю.")
         return
-
     post_text, topic_ru, image_url = load_draft()
     if post_text is None:
         print("❌ Не могу загрузить черновик. Отмена.")
         return
-
     final_text = post_text if reply == "YES" else reply
     print("🚀 Публикую в канал...")
     post_to_channel(final_text, image_url)
